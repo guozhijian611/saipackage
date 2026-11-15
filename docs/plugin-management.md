@@ -16,7 +16,7 @@
 
 参考 examples/logistics_ocr/manifest.json 和 settings.schema.json。这里只是元数据示例，不是可安装业务插件。ZIP 根目录包含 info.ini、config.json、新声明和 docs；业务代码仍放 plugin/<app>，前端仍放 <FRONTEND_DIR>/src/views/plugin/<app>。
 
-标识沿用安装器规则，使用 logistics_ocr 而非 logistics-ocr。版本必须为 SemVer，清单与 info.ini 一致。requiresPlugins 和 conflictsPlugins 使用 Composer Semver 约束。requiresHost 可声明 php/saiadmin/saipackage 约束。第一版每个插件保存一个上传候选包，解析器同时考虑已安装版本和该候选版本；不从商店自动下载。
+标识沿用安装器规则，使用 logistics_ocr 而非 logistics-ocr。版本必须为 SemVer，清单与 info.ini 一致。requiresPlugins 和 conflictsPlugins 使用 Composer Semver 约束。requiresHost 可声明 php/saiadmin/saipackage 约束。第一版每个插件保存一个上传候选包，解析器同时考虑已安装版本和该候选版本；后台版本检测不下载；管理员手动请求在线下载并预览后，才准备候选包，详见 [在线更新](online-updates.md)。
 
 配置必须显式声明 properties；不支持 $ref、条件及组合 schema，确保表单、校验和密钥脱敏使用同一套字段。支持 object 分组和 string/integer/number/boolean 叶字段，以及 enum、required、格式和范围等标准校验。敏感值必须在叶字段设置 writeOnly=true，禁止在 default 中包含凭据。实例级为当前可用作用域；租户配置暂不开放，声明 tenant 会明确拒绝，不能从请求传入 tenantId 绕过隔离。未来租户适配需同时提供可信身份解析和授权。
 

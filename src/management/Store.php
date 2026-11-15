@@ -8,6 +8,7 @@ use RuntimeException;
 final class Store
 {
     public const TABLES = ['packages', 'installations', 'dependencies', 'settings', 'service_checks', 'tasks'];
+    public const EXTRA_TABLES = ['updates'];
 
     public function __construct(private PDO $pdo, private string $prefix = '')
     {
@@ -19,7 +20,7 @@ final class Store
 
     private function table(string $table): string
     {
-        if (!in_array($table, self::TABLES, true)) {
+        if (!in_array($table, [...self::TABLES, ...self::EXTRA_TABLES], true)) {
             throw new ManagementException('Invalid repository');
         }
         return $this->prefix . 'saipackage_' . $table;

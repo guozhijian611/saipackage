@@ -411,11 +411,16 @@ class InstallLogic
                 // 版本号写成两段（如 6.1）时 nextVersion 与旧版本完全相同，
                 // 而 Version::compare() 相等即为真 —— 重复上传同一个包会被当成升级，
                 // 直接把线上那份覆盖掉（升级路径还会删旧目录）
-                $old = ltrim((string) ($oldInfo['version'] ?? ''), 'vV') ?: '0.0.0';
+                $installed = $management?->store->get('installations', $this->appName)['value'] ?? null;
+                $baseline = $installed && $installed['state'] !== 'uninstalled' ? $installed['manifest']['version'] : ($oldInfo['version'] ?? '');
+                $old = ltrim((string) $baseline, 'vV') ?: '0.0.0';
                 $versions = array_slice(array_pad(explode('.', $old), 3, '0'), 0, 3);
                 $versions[2] = (int) $versions[2] + 1;
                 $nextVersion = implode('.', $versions);
-                $upgrade = Version::compare($nextVersion, $info['version'] ?? '');
+                // Managed releases use SemVer, including beta -> stable without a patch bump.
+                $upgrade = $management
+                    ? Manifest::matches((string) ($info['version'] ?? ''), '>' . $old)
+                    : Version::compare($nextVersion, $info['version'] ?? '');
                 if (!$upgrade) {
                     Filesystem::delDir($copyToDir);
                     throw new ApiException('插件已经存在');
@@ -466,6 +471,9 @@ class InstallLogic
         $globalLock = $management?->lock();
         $management?->importLegacy();
         $snapshot = $management ? ($approvedSnapshot ? $management->assertPlanStep($this->appName, $approvedSnapshot) : $management->assertSingleInstall($this->appName)) : null;
+        if ($management && $snapshot) {
+            \Saithink\Saipackage\management\UpgradeServices::assertCompatible($management, Factory::services($management), $snapshot);
+        }
         // 上锁再读状态：双击安装按钮会并发进来两个请求，两个都能过状态检查，
         // 然后同时往 plugin/{app} 复制文件、同时跑 migrate 抢 phinxlog_{app}，
         // 最后各自重启一次后端。$lock 活到方法返回为止（异常退出也会释放）

@@ -29,6 +29,7 @@ composer require saithink/saipackage
 - [启用、插件契约与 API](docs/plugin-management.md)
 - [验证记录](docs/validation.md)
 - [声明示例](examples/logistics_ocr/manifest.json)
+- [在线版本检测与手动升级](docs/online-updates.md)：自建 JSON 源及官方商店适配，自动检测只更新缓存；下载预览后需再次手动确认。
 
 升级后先运行 `php webman saipackage:setup`，配置稳定的 `SAIPACKAGE_SETTINGS_KEY`，再设置 `SAIPACKAGE_MANAGEMENT_ENABLED=1` 并重启、构建前端。未启用时保持旧安装流程。
 

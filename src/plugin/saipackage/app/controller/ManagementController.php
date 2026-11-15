@@ -55,9 +55,16 @@ final class ManagementController extends BaseController
 
     public function tasks(Request $request): Response
     {
-        $tasks = Factory::manager()->store->all('tasks');
+        $manager = Factory::manager();
+        $tasks = $manager->store->all('tasks');
         foreach ($tasks as &$row) {
             if (isset($row['value']['plan'])) $row['value']['plan'] = array_intersect_key($row['value']['plan'], array_flip(['root', 'changes']));
+            $task = $row['value'];
+            if (($task['kind'] ?? '') === 'prepare_update' && $task['state'] === 'succeeded' && !isset($task['confirmedTaskId'])) {
+                $current = $manager->store->get('installations', $task['plugin'])['value']['manifest']['version'] ?? '';
+                $target = $task['result']['changes'][$task['plugin']]['to'] ?? '';
+                if ($current && $target && \Saithink\Saipackage\management\Manifest::matches($current, '>=' . $target)) $row['value']['stage'] = 'obsolete';
+            }
         }
         unset($row);
         return $this->success($tasks);
@@ -132,5 +139,41 @@ final class ManagementController extends BaseController
         $item = $manager->store->get('installations', $id) ?? $manager->store->get('packages', $id);
         if (!$item) throw new ApiException('Plugin package not found', 404);
         return $this->success($item['value']['docs']);
+    }
+
+    public function updates(Request $request): Response
+    {
+        $manager = Factory::manager();
+        return $this->success(Factory::updates($manager)->catalog());
+    }
+
+    public function checkUpdates(Request $request): Response
+    {
+        $manager = Factory::manager();
+        $id = $request->post('appName') ? $this->id($request) : null;
+        if ($id !== null) $this->item($id);
+        Factory::updates($manager)->requestCheck($id);
+        return $this->success(['state' => 'pending']);
+    }
+
+    public function prepareUpdate(Request $request): Response
+    {
+        $manager = Factory::manager();
+        $id = Factory::updates($manager)->requestPreparation($this->id($request), (string) $request->post('releaseFingerprint', ''), $this->adminId);
+        return $this->success(['taskId' => $id]);
+    }
+
+    public function updatePlan(Request $request): Response
+    {
+        $manager = Factory::manager();
+        $lock = $manager->lock();
+        return $this->success(Factory::updates($manager)->preparedPlan((string) $request->post('taskId'), Factory::services($manager)));
+    }
+
+    public function confirmUpdate(Request $request): Response
+    {
+        $manager = Factory::manager();
+        $taskId = Factory::updates($manager)->confirm((string) $request->post('taskId'), (string) $request->post('fingerprint'), $this->adminId, Factory::services($manager));
+        return $this->success(['taskId' => $taskId]);
     }
 }

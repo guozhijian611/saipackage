@@ -32,4 +32,9 @@ final class Factory
         }
         return new Services($manager->store, $manager->settings, $probes);
     }
+
+    public static function updates(Manager $manager): Updates
+    {
+        return new Updates($manager, (array) config('plugin.saipackage.management.updates', []));
+    }
 }

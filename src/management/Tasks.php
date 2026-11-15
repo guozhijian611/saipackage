@@ -39,7 +39,7 @@ final class Tasks
     }
 
     /** One durable plugin step per poll. Interrupted non-idempotent work requires explicit recovery. */
-    public function tick(callable $install, callable $uninstall): bool
+    public function tick(callable $install, callable $uninstall, ?callable $prepareUpdate = null): bool
     {
         $lock = $this->manager->lock();
         foreach ($this->manager->store->all('tasks') as $id => $row) {
@@ -52,6 +52,24 @@ final class Tasks
             }
             if (in_array($task['state'], ['needs_attention', 'waiting_dependencies'], true)) return false;
             if ($task['state'] !== 'queued') continue;
+            if ($task['kind'] === 'prepare_update') {
+                $task['state'] = 'running';
+                $task['current'] = $task['plugin'];
+                $task['stage'] = 'download';
+                $revision = $this->manager->store->put('tasks', $id, $task, $row['revision']);
+                try {
+                    if (!$prepareUpdate) throw new ManagementException('UPDATE_PREPARATION_UNAVAILABLE');
+                    $task['result'] = $prepareUpdate($task);
+                    $task['state'] = 'succeeded';
+                    $task['stage'] = 'awaiting_confirmation';
+                } catch (\Throwable $e) {
+                    $task['state'] = 'needs_attention';
+                    $task['error'] = $e instanceof ManagementException && str_starts_with($e->getMessage(), 'UPDATE_') ? $e->getMessage() : 'UPDATE_PREPARATION_FAILED';
+                }
+                $task['events'][] = ['plugin' => $task['plugin'], 'stage' => $task['stage'], 'state' => $task['state'], 'at' => time()];
+                $this->manager->store->put('tasks', $id, $task, $revision);
+                return false; // only a ZIP was staged; no plugin code was activated and no restart is needed
+            }
             $current = $task['kind'] === 'uninstall' ? $task['plugin'] : array_values(array_diff(array_keys($task['plan']['steps']), $task['completed']))[0] ?? null;
             if (!$current) {
                 $task['state'] = 'succeeded';
@@ -98,11 +116,12 @@ final class Tasks
                 $task['events'][] = ['plugin' => $current, 'state' => $task['state'], 'at' => time()];
                 $this->manager->store->put('tasks', $id, $task, $revision);
                 return true;
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
                 $latest = $this->manager->store->get('tasks', $id);
                 $task = $latest['value'];
                 $task['state'] = 'needs_attention';
                 $task['error'] = isset($revision) ? 'INSTALLATION_STEP_FAILED' : 'PREFLIGHT_FAILED';
+                if ($e instanceof ManagementException && str_starts_with($e->getMessage(), 'UPDATE_')) $task['error'] = $e->getMessage();
                 $task['current'] = $current;
                 $task['events'][] = ['plugin' => $current, 'state' => $task['state'], 'at' => time()];
                 $this->manager->store->put('tasks', $id, $task, $latest['revision']);
@@ -122,6 +141,7 @@ final class Tasks
         if (!in_array($task['state'], ['needs_attention', 'waiting_dependencies'], true)) throw new ManagementException('Task does not require recovery');
         if (!in_array($action, ['retry', 'accept_completed', 'cancel'], true)) throw new ManagementException('Invalid recovery action');
         if ($action === 'accept_completed') {
+            if ($task['kind'] === 'prepare_update') throw new ManagementException('Retry or cancel the preparation task');
             $item = $this->manager->store->get('installations', $task['current'])['value'] ?? [];
             $expectedState = $task['kind'] === 'uninstall' ? 'uninstalled' : 'installed';
             if (($item['state'] ?? '') !== $expectedState) throw new ManagementException('Installation has not reached the expected state');

@@ -36,6 +36,7 @@ final class Manifest
             throw new ManagementException('Unsupported manifest schemaVersion');
         }
         if (isset($manifest['settingsVersion']) && (!is_int($manifest['settingsVersion']) || $manifest['settingsVersion'] < 1)) throw new ManagementException('settingsVersion must be a positive integer');
+        if (isset($manifest['updateSource']) && (!is_string($manifest['updateSource']) || !preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,99}$/D', $manifest['updateSource']))) throw new ManagementException('Invalid updateSource name');
         if (empty($manifest['legacy']) && !preg_match('/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/D', $manifest['version'] ?? '')) {
             throw new ManagementException('Plugin version must be SemVer');
         }

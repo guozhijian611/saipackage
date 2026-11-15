@@ -7,11 +7,11 @@ from pathlib import Path
 out = Path(sys.argv[1])
 out.mkdir(parents=True, exist_ok=True)
 
-def build(app, version, deps=None, external=False, fail=False):
+def build(app, version, deps=None, external=False, fail=False, service_version='^2'):
     manifest = {"schemaVersion": 1, "id": app, "version": version, "requiresPlugins": deps or {}, "settingsVersion": 1}
     schema = {"type": "object", "properties": {}}
     if external:
-        manifest['externalServices'] = [{"id": "ocr", "probe": "json-health", "settingsGroup": "ocr", "required": True, "version": "^2", "capabilities": ["recognize"]}]
+        manifest['externalServices'] = [{"id": "ocr", "probe": "json-health", "settingsGroup": "ocr", "required": True, "version": service_version, "capabilities": ["recognize"]}]
         schema = {"type": "object", "additionalProperties": False, "required": ["ocr"], "properties": {"ocr": {
             "type": "object", "additionalProperties": False, "required": ["endpoint", "apiKey"], "properties": {
                 "endpoint": {"type": "string", "format": "uri", "title": "Endpoint"},
@@ -61,3 +61,7 @@ build('managed_ocr', '1.1.0', {'managed_dep': '^1'}, True)
 build('managed_fail', '1.1.0', fail=True)
 build('managed_fail', '1.1.1')
 build('managed_async', '1.0.0')
+build('managed_ocr', '1.2.0', {'managed_dep': '^1'}, True)
+build('managed_ocr', '1.3.0', {'managed_dep': '^1'}, True, service_version='^3')
+build('managed_pre', '0.9.0-beta.1')
+build('managed_pre', '0.9.0')

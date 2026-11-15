@@ -15,6 +15,29 @@ final class Manager
         return new MutationLock($this->packageRoot);
     }
 
+    public function updateDirectory(): string
+    {
+        $path = rtrim($this->packageRoot, '/\\') . '/.updates';
+        if (!is_dir($path) && !mkdir($path, 0700, true) && !is_dir($path)) throw new ManagementException('Cannot create update cache directory');
+        return $path;
+    }
+
+    public function resolveManifest(array $manifest): array
+    {
+        $packages = [];
+        foreach ($this->store->all('packages') as $id => $row) $packages[$id] = $row['value'] + ['source' => 'package'];
+        $packages[$manifest['id']] = ['manifest' => $manifest, 'source' => 'package'];
+        return (new DependencyResolver())->resolve($manifest['id'], $this->installed(), $packages, $this->host);
+    }
+
+    public function environmentFingerprint(): string
+    {
+        $state = [];
+        foreach ($this->store->all('installations') as $id => $row) $state['installed'][$id] = $row['revision'];
+        foreach ($this->store->all('packages') as $id => $row) $state['packages'][$id] = $row['value']['fingerprint'];
+        return hash('sha256', json_encode([$this->host, $state], JSON_THROW_ON_ERROR));
+    }
+
     public function installed(): array
     {
         $result = [];
