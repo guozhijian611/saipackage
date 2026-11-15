@@ -508,7 +508,7 @@ class InstallLogic
         }
 
         // Preflight code-library declarations before changing plugin files or database.
-        $this->preflightLibraryDependencies();
+        if ($management) $this->preflightLibraryDependencies();
         if ($management && $snapshot) $management->begin($this->appName, $snapshot);
         // 安装全程关掉文件监控，理由见 monitorPause()
         self::monitorPause();
@@ -836,7 +836,7 @@ class InstallLogic
                     $composer = true;
                     foreach ($item as $name => &$constraint) {
                         $existing = $serverDep->hasDepend($name);
-                        if ($existing !== false) $constraint = \Saithink\Saipackage\management\LibraryConstraints::intersect($existing, $constraint);
+                        if (Factory::enabled() && $existing !== false) $constraint = \Saithink\Saipackage\management\LibraryConstraints::intersect($existing, $constraint);
                     }
                     unset($constraint);
                     $serverDep->addDepends($item, false, true);
@@ -844,7 +844,7 @@ class InstallLogic
                     $composer = true;
                     foreach ($item as $name => &$constraint) {
                         $existing = $serverDep->hasDepend($name, true);
-                        if ($existing !== false) $constraint = \Saithink\Saipackage\management\LibraryConstraints::intersect($existing, $constraint);
+                        if (Factory::enabled() && $existing !== false) $constraint = \Saithink\Saipackage\management\LibraryConstraints::intersect($existing, $constraint);
                     }
                     unset($constraint);
                     $serverDep->addDepends($item, true, true);
