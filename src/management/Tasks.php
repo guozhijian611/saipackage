@@ -34,6 +34,7 @@ final class Tasks
         if (!$installation || !in_array($installation['value']['state'], ['installed', 'failed', 'waiting_dependencies'], true)) throw new ManagementException('Plugin is not installed');
         $taskId = bin2hex(random_bytes(16));
         $this->manager->store->put('tasks', $taskId, ['state' => 'queued', 'kind' => 'uninstall', 'plugin' => $id, 'installationRevision' => $installation['revision'],
+            'installationFingerprint' => $installation['value']['fingerprint'] ?? null,
             'actor' => $actor, 'completed' => [], 'current' => null, 'events' => [], 'createdAt' => time()], 0);
         return $taskId;
     }
@@ -140,12 +141,21 @@ final class Tasks
         $task = $row['value'];
         if (!in_array($task['state'], ['needs_attention', 'waiting_dependencies'], true)) throw new ManagementException('Task does not require recovery');
         if (!in_array($action, ['retry', 'accept_completed', 'cancel'], true)) throw new ManagementException('Invalid recovery action');
+        if ($action === 'retry' && $task['state'] === 'waiting_dependencies') throw new ManagementException('Complete library installation, then accept the completed step');
+        if ($action === 'retry' && $task['kind'] === 'uninstall') {
+            $installation = $this->manager->store->get('installations', $task['plugin']);
+            if (!$installation || !isset($task['installationFingerprint']) || ($installation['value']['fingerprint'] ?? null) !== $task['installationFingerprint']
+                || !in_array($installation['value']['state'], ['installed', 'failed', 'uninstalling', 'waiting_dependencies'], true)) throw new ManagementException('Installation changed; cancel and review a new uninstall task', 409);
+            // Failure-state writes increment the revision; retry still targets the exact same installation.
+            $task['installationRevision'] = $installation['revision'];
+        }
         if ($action === 'accept_completed') {
             if ($task['kind'] === 'prepare_update') throw new ManagementException('Retry or cancel the preparation task');
             $item = $this->manager->store->get('installations', $task['current'])['value'] ?? [];
             $expectedState = $task['kind'] === 'uninstall' ? 'uninstalled' : 'installed';
             if (($item['state'] ?? '') !== $expectedState) throw new ManagementException('Installation has not reached the expected state');
             if ($task['kind'] === 'install' && $item['manifest']['version'] !== $task['plan']['steps'][$task['current']]['manifest']['version']) throw new ManagementException('Installed version differs from plan');
+            if ($task['kind'] === 'install' && ($item['fingerprint'] ?? null) !== $task['plan']['steps'][$task['current']]['fingerprint']) throw new ManagementException('Installed package differs from plan');
             $task['completed'][] = $task['current'];
         }
         $task['state'] = $action === 'cancel' ? 'cancelled' : (($task['kind'] === 'uninstall' && $action === 'accept_completed') ? 'succeeded' : 'queued');

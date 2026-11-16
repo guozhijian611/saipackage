@@ -54,6 +54,8 @@ final class Store
                 $statement = $this->pdo->prepare("INSERT INTO $name (id, payload, revision, updated_at) VALUES (?, ?, 1, ?)");
                 $statement->execute([$id, $json, time()]);
             } catch (\PDOException $e) {
+                // PostgreSQL aborts the transaction on a duplicate insert; a query here would mask the conflict.
+                if ($e->getCode() === '23505') throw new ManagementException('Revision conflict', 409);
                 if ($this->get($table, $id)) {
                     throw new ManagementException('Revision conflict', 409);
                 }

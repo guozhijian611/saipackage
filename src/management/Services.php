@@ -11,6 +11,11 @@ final class Services
     {
     }
 
+    public static function requirementsFingerprint(array $manifest): string
+    {
+        return hash('sha256', json_encode($manifest['externalServices'] ?? [], JSON_THROW_ON_ERROR));
+    }
+
     public function check(string $id, array $manifest, array $schema, ?array $draft = null): array
     {
         $raw = $this->settings->raw($id);
@@ -39,6 +44,7 @@ final class Services
             $row = $this->store->get('service_checks', $id);
             $this->store->put('service_checks', $id, [
                 'settingsRevision' => $raw['revision'], 'fingerprint' => $this->settings->fingerprint($values, $schema),
+                'requirementsFingerprint' => self::requirementsFingerprint($manifest),
                 'results' => $results, 'checkedAt' => time(),
             ], $row['revision'] ?? 0);
         }

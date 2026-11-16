@@ -223,7 +223,8 @@ final class ManagementTest extends TestCase
     {
         $this->save();
         $this->settings->clear('ocr', 1);
-        self::assertSame(0, $this->settings->raw('ocr')['revision']);
+        self::assertSame(2, $this->settings->raw('ocr')['revision']);
+        self::assertSame([], $this->settings->raw('ocr')['values']);
     }
 
     public function testFailedStateBlocksBusinessEvenWithValidConfig(): void
@@ -368,5 +369,150 @@ final class ManagementTest extends TestCase
         self::assertCount(1, $row['value']['history']);
         self::assertStringNotContainsString('test-private-key', json_encode($row));
         self::assertFalse(Manifest::validateSettings($this->settings->raw('ocr')['values'], $schema));
+    }
+
+    public function testFailedPrerequisiteMustBeRepairedInsteadOfReused(): void
+    {
+        $failed = $this->item('b', '1.0.0', [], 'installed') + ['state' => 'failed'];
+        $resolver = new DependencyResolver();
+        $packages = ['a' => $this->item('a', '1.0.0', ['b' => '^1'])];
+        try { $resolver->resolve('a', ['b' => $failed], $packages); self::fail('Failed dependency reused'); }
+        catch (RuntimeException $e) { self::assertStringContainsString('Unsatisfied', $e->getMessage()); }
+        $packages['b'] = $this->item('b');
+        self::assertSame(['b', 'a'], array_keys($resolver->resolve('a', ['b' => $failed], $packages)['steps']));
+    }
+
+    public function testServiceContractChangeInvalidatesHealthyResultWithUnchangedSettings(): void
+    {
+        $this->save();
+        $manager = new Manager($this->store, $this->settings, $this->directory);
+        $snapshot = ['manifest' => $this->serviceManifest(), 'schema' => $this->schema()];
+        $manager->recordInstalled('ocr', $snapshot);
+        $probe = new class implements ServiceProbe { public function check(array $settings, array $service): array { return ['code' => 'OK']; } };
+        (new Services($this->store, $this->settings, ['ocr' => $probe]))->check('ocr', $snapshot['manifest'], $snapshot['schema']);
+        self::assertTrue((new RuntimeGuard($this->store, $this->settings))->status('ocr')['ready']);
+        $snapshot['manifest']['externalServices'][0]['version'] = '^3';
+        $manager->recordInstalled('ocr', $snapshot);
+        self::assertFalse((new RuntimeGuard($this->store, $this->settings))->status('ocr')['ready']);
+    }
+
+    public function testRemovedOrReclassifiedSecretsNeverAppearInSettingsView(): void
+    {
+        $this->save();
+        $plain = $this->schema();
+        unset($plain['properties']['ocr']['properties']['apiKey']['writeOnly']);
+        $this->settings->migrate('ocr', $plain, 2, null);
+        self::assertStringNotContainsString('test-private-key', json_encode($this->settings->view('ocr', $plain)));
+        unset($plain['properties']['ocr']['properties']['apiKey']);
+        self::assertStringNotContainsString('test-private-key', json_encode($this->settings->view('ocr', $plain)));
+        // Rows saved before secretPaths existed acquire their previous classification on upgrade.
+        $row = $this->store->get('settings', 'ocr'); $value = $row['value']; unset($value['secretPaths']);
+        $this->store->put('settings', 'ocr', $value, $row['revision']);
+        $prepared = $this->settings->prepareMigration('ocr', $plain, 3, null, $this->schema());
+        $this->settings->commitMigration('ocr', $prepared);
+        self::assertSame(['ocr.apiKey'], $this->store->get('settings', 'ocr')['value']['secretPaths']);
+    }
+
+    public function testClearAndRecreateCannotReuseAStaleSettingsRevision(): void
+    {
+        $this->save();
+        $this->settings->clear('ocr', 1);
+        $this->save(2);
+        $this->expectExceptionMessage('Revision conflict');
+        $this->save(1);
+    }
+
+    public function testSettingsSaveCannotDowngradeAMigratedConfiguration(): void
+    {
+        $this->save();
+        $this->settings->migrate('ocr', $this->schema(), 2, null);
+        $this->expectExceptionMessage('Settings version downgrade');
+        $this->save(2);
+    }
+
+    public function testMigrationPreviewDoesNotPersistAndCommitRejectsConcurrentEdits(): void
+    {
+        $this->save();
+        $prepared = $this->settings->prepareMigration('ocr', $this->schema(), 2, fn ($values) => $values);
+        self::assertSame(1, $this->settings->raw('ocr')['version']);
+        $this->save(1, 'http://changed');
+        $this->expectExceptionMessage('Settings changed during installation');
+        $this->settings->commitMigration('ocr', $prepared);
+    }
+
+    public function testUpgradeProbesMigratedValuesAgainstTargetSchema(): void
+    {
+        $this->save();
+        $manager = new Manager($this->store, $this->settings, $this->directory, [], ['ocr' => static function ($values) { $values['service'] = $values['ocr']; unset($values['ocr']); return $values; }]);
+        $manager->recordInstalled('ocr', ['manifest' => $this->serviceManifest(), 'schema' => $this->schema()]);
+        $schema = $this->schema(); $schema['properties']['service'] = $schema['properties']['ocr']; unset($schema['properties']['ocr']); $schema['required'] = ['service'];
+        $manifest = $this->serviceManifest(); $manifest['settingsVersion'] = 2; $manifest['externalServices'][0]['settingsGroup'] = 'service';
+        $probe = new class implements ServiceProbe { public function check(array $settings, array $service): array { return ['code' => ($settings['apiKey'] ?? '') === 'test-private-key' ? 'OK' : 'AUTH_FAILED']; } };
+        \Saithink\Saipackage\management\UpgradeServices::assertCompatible($manager, new Services($this->store, $this->settings, ['ocr' => $probe]), ['schema' => $schema, 'manifest' => $manifest]);
+        self::assertSame(1, $this->settings->raw('ocr')['version']);
+    }
+
+    public function testFailedUninstallCanRetryTheSameInstallationAfterStateRevisionChanges(): void
+    {
+        $manager = $this->stage('a');
+        $manager->recordInstalled('a', $manager->registerPackage('a'));
+        $tasks = new Tasks($manager); $id = $tasks->submitUninstall('a', 1);
+        $tasks->tick(fn () => null, function () use ($manager) { $manager->mark('a', 'uninstalling'); $manager->mark('a', 'failed'); throw new RuntimeException('rollback failed'); });
+        $tasks->recover($id, 'retry', $this->store->get('tasks', $id)['revision'], 1);
+        $tasks->tick(fn () => null, function () use ($manager) { $manager->mark('a', 'uninstalled'); return []; });
+        self::assertSame('succeeded', $this->store->get('tasks', $id)['value']['state']);
+    }
+
+    public function testNewBusinessSettingsCanRemainPendingWhenRequiredServiceIsCompatible(): void
+    {
+        $this->save();
+        $manager = new Manager($this->store, $this->settings, $this->directory);
+        $manager->recordInstalled('ocr', ['manifest' => $this->serviceManifest(), 'schema' => $this->schema()]);
+        $schema = $this->schema(); $schema['properties']['model'] = ['type'=>'string']; $schema['required'][] = 'model';
+        $probe = new class implements ServiceProbe { public function check(array $settings, array $service): array { return ['code' => 'OK']; } };
+        \Saithink\Saipackage\management\UpgradeServices::assertCompatible($manager, new Services($this->store, $this->settings, ['ocr'=>$probe]), ['manifest'=>$this->serviceManifest(),'schema'=>$schema]);
+        self::assertFalse(Manifest::validateSettings($this->settings->raw('ocr')['values'], $schema));
+    }
+
+    public function testIncompleteRegistryFinalizationRemainsPlannable(): void
+    {
+        $manager = $this->stage('a'); $snapshot = $manager->registerPackage('a');
+        $manager->begin('a', $snapshot);
+        file_put_contents($this->directory . '/a/info.ini', str_replace('state = 2', 'state = 1', file_get_contents($this->directory . '/a/info.ini')));
+        self::assertSame(['a'], array_keys($manager->plan('a')['steps']));
+    }
+
+    public function testInterruptedStagingArtifactsAreNotImportedAsPluginRecords(): void
+    {
+        mkdir($this->directory . '/.previous-fixture');
+        file_put_contents($this->directory . '/.previous-fixture/info.ini', "app = a\nversion = 1.0.0\nstate = 1\n");
+        self::assertSame([], \Saithink\Saipackage\service\Server::installedList($this->directory . '/'));
+    }
+
+    public function testUninstallRetryRejectsAReplacementInstallation(): void
+    {
+        $manager = $this->stage('a'); $snapshot = $manager->registerPackage('a'); $manager->recordInstalled('a', $snapshot);
+        $tasks = new Tasks($manager); $id = $tasks->submitUninstall('a', 1);
+        $tasks->tick(fn () => null, function () use ($manager) { $manager->mark('a', 'failed'); throw new RuntimeException('failed'); });
+        $snapshot['fingerprint'] = 'replacement'; $manager->recordInstalled('a', $snapshot);
+        $this->expectExceptionMessage('Installation changed');
+        $tasks->recover($id, 'retry', $this->store->get('tasks', $id)['revision'], 1);
+    }
+
+    public function testWaitingLibrariesCannotRetryDatabaseWork(): void
+    {
+        $manager = $this->stage('a'); $tasks = new Tasks($manager); $id = $tasks->submit('a', $manager->plan('a')['fingerprint'], 1);
+        $tasks->tick(fn () => ['state' => 4], fn () => null);
+        $this->expectExceptionMessage('Complete library installation');
+        $tasks->recover($id, 'retry', $this->store->get('tasks', $id)['revision'], 1);
+    }
+
+    public function testAcceptCompletedRequiresTheReviewedPayload(): void
+    {
+        $manager = $this->stage('a'); $tasks = new Tasks($manager); $id = $tasks->submit('a', $manager->plan('a')['fingerprint'], 1);
+        $tasks->tick(fn () => throw new RuntimeException('failed'), fn () => null);
+        $snapshot = $manager->registerPackage('a'); $snapshot['fingerprint'] = 'different'; $manager->recordInstalled('a', $snapshot);
+        $this->expectExceptionMessage('Installed package differs from plan');
+        $tasks->recover($id, 'accept_completed', $this->store->get('tasks', $id)['revision'], 1);
     }
 }

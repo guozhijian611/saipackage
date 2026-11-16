@@ -159,7 +159,7 @@ final class UpdatesTest extends TestCase
 
     public function testRequiredExternalServiceBlocksUpgradeWithoutChangingInstallation(): void
     {
-        $snapshot = ['manifest' => $this->manifest('2.0.0') + ['externalServices' => [['id' => 'ocr', 'probe' => 'missing', 'settingsGroup' => 'ocr', 'required' => true]]]];
+        $snapshot = ['schema' => ['type' => 'object', 'properties' => []], 'manifest' => $this->manifest('2.0.0') + ['externalServices' => [['id' => 'ocr', 'probe' => 'missing', 'settingsGroup' => 'ocr', 'required' => true]]]];
         $this->expectExceptionMessage('UPDATE_EXTERNAL_SERVICE_UNKNOWN');
         UpgradeServices::assertCompatible($this->manager, new Services($this->manager->store, $this->manager->settings, []), $snapshot);
     }
@@ -181,5 +181,25 @@ final class UpdatesTest extends TestCase
         self::assertSame($id, $this->manager->store->get('tasks', 'prepared')['value']['confirmedTaskId']);
         $this->expectExceptionMessage('UPDATE_ALREADY_CONFIRMED');
         $this->updates()->confirm('prepared', $plan['fingerprint'], 1, $services);
+    }
+
+    public function testChangedMigrationPreviewInvalidatesManualConfirmation(): void
+    {
+        $store = $this->manager->store; $settings = $this->manager->settings; $label = 'before';
+        $settings->save('a', ['type'=>'object','properties'=>[]], 1, [], [], 0, 1);
+        $this->manager = new Manager($store, $settings, $this->directory, [], ['a'=>static function () use (&$label) { return ['label'=>$label]; }]);
+        $release = $this->release('1.1.0'); $release['manifest']['settingsVersion']=2; $this->source->items=[$release];
+        $view = $this->updates()->check('a'); $path=$this->manager->packagePath('a'); mkdir($path);
+        file_put_contents($path.'info.ini', "app = a\nversion = 1.1.0\nstate = 2\ntitle = A\nauthor = Tests\nabout = Tests\n");
+        file_put_contents($path.'manifest.json', json_encode($release['manifest']));
+        file_put_contents($path.'settings.schema.json', json_encode(['type'=>'object','properties'=>['label'=>['type'=>'string']], 'ui'=>['fields'=>['label'=>['connection'=>false]]]]));
+        $this->manager->registerPackage('a');
+        $store->put('tasks','prepared',['kind'=>'prepare_update','state'=>'succeeded','plugin'=>'a','releaseFingerprint'=>$view['releases'][0]['fingerprint'],
+            'result'=>['packageFingerprint'=>$this->manager->fingerprint($path)]],0);
+        $services=new Services($store,$settings,[]); $plan=$this->updates()->preparedPlan('prepared',$services);
+        self::assertSame(1,$settings->raw('a')['version']);
+        $label='after';
+        $this->expectExceptionMessage('Installation plan has changed');
+        $this->updates()->confirm('prepared',$plan['fingerprint'],1,$services);
     }
 }

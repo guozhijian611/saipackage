@@ -31,6 +31,10 @@ final class ManagementController extends BaseController
     {
         $item = Factory::manager()->store->get('installations', $id)['value'] ?? null;
         if (!$item) throw new ApiException('Plugin is not installed', 404);
+        // A failed upgrade may already have migrated settings. Edit the target contract, never downgrade it.
+        if (isset($item['pending']) && in_array($item['state'], ['installing', 'upgrading', 'failed', 'waiting_dependencies'], true)) {
+            $item = array_replace($item, $item['pending']);
+        }
         return $item;
     }
 

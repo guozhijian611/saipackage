@@ -26,11 +26,13 @@ final class RuntimeGuard
         }
         try {
             $raw = $this->settings->raw($id);
+            if ($raw['revision'] && $raw['version'] !== ($item['manifest']['settingsVersion'] ?? 1)) $config = 'invalid';
             if (!Manifest::validateSettings($raw['values'], $item['schema'])) $config = 'missing';
             $services = $item['manifest']['externalServices'] ?? [];
             $check = $this->store->get('service_checks', $id)['value'] ?? [];
             foreach ($services as $service) {
-                $same = isset($check['fingerprint']) && hash_equals($check['fingerprint'], $this->settings->fingerprint($raw['values'], $item['schema']));
+                $same = isset($check['fingerprint']) && hash_equals($check['fingerprint'], $this->settings->fingerprint($raw['values'], $item['schema']))
+                    && ($check['requirementsFingerprint'] ?? '') === Services::requirementsFingerprint($item['manifest']);
                 $recent = time() - (int) ($check['checkedAt'] ?? 0) <= $this->maxCheckAge;
                 $code = $same && $recent ? ($check['results'][$service['id']]['code'] ?? 'UNKNOWN') : 'UNKNOWN';
                 if ($code !== 'OK') {

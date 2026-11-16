@@ -227,9 +227,13 @@ final class Updates
         $this->cachedRelease($id, $task['releaseFingerprint'], false);
         if (!hash_equals($task['result']['packageFingerprint'], $this->manager->fingerprint($this->manager->packagePath($id)))) throw new ManagementException('UPDATE_PACKAGE_CHANGED', 409);
         $plan = $this->manager->plan($id);
-        foreach ($plan['steps'] as $snapshot) UpgradeServices::assertCompatible($this->manager, $services, $snapshot);
         $settings = [];
-        foreach ($plan['steps'] as $plugin => $_) $settings[$plugin] = $this->manager->store->get('settings', $plugin)['revision'] ?? 0;
+        foreach ($plan['steps'] as $plugin => $snapshot) {
+            $prepared = $this->manager->previewSettings($snapshot);
+            UpgradeServices::assertCompatible($this->manager, $services, $snapshot, $prepared);
+            $settings[$plugin] = [$this->manager->store->get('settings', $plugin)['revision'] ?? 0,
+                $prepared === null ? null : $this->manager->settings->fingerprint($prepared['values'], $snapshot['schema'], false)];
+        }
         $plan['fingerprint'] = hash('sha256', json_encode([$plan['fingerprint'], $settings], JSON_THROW_ON_ERROR));
         return array_intersect_key($plan, array_flip(['root', 'selected', 'changes', 'fingerprint']));
     }

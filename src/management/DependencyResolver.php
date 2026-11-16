@@ -44,6 +44,8 @@ final class DependencyResolver
     {
         if (--$this->remaining < 0) throw new ManagementException('Dependency graph is too complex; reduce candidate versions or split the installation plan');
         foreach ($selected as $id => $item) {
+            // Reserve failed installations for reverse constraints, but never reuse them as prerequisites.
+            if (($item['source'] ?? '') === 'installed' && ($item['state'] ?? 'installed') !== 'installed' && !empty($required[$id])) return null;
             foreach ($required[$id] ?? [] as $constraint) if (!Manifest::matches($item['manifest']['version'], $constraint)) return null;
             foreach ($item['manifest']['conflictsPlugins'] ?? [] as $other => $constraint) {
                 if (isset($selected[$other]) && Manifest::matches($selected[$other]['manifest']['version'], $constraint)) return null;

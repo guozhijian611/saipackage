@@ -6,8 +6,16 @@ use Saithink\Saipackage\service\Server;
 
 final class Manager
 {
-    public function __construct(public readonly Store $store, public readonly Settings $settings, private string $packageRoot, private array $host = [])
+    public function __construct(public readonly Store $store, public readonly Settings $settings, private string $packageRoot, private array $host = [], private array $settingsMigrations = [])
     {
+    }
+
+    public function previewSettings(array $snapshot): ?array
+    {
+        $id = $snapshot['manifest']['id'];
+        $previous = $this->store->get('installations', $id)['value']['schema'] ?? [];
+        $migration = $this->settingsMigrations[$id] ?? null;
+        return $this->settings->prepareMigration($id, $snapshot['schema'], (int) ($snapshot['manifest']['settingsVersion'] ?? 1), is_callable($migration) ? $migration : null, $previous);
     }
 
     public function lock(): MutationLock
@@ -106,8 +114,10 @@ final class Manager
     {
         $packages = [];
         foreach (Server::installedList(rtrim($this->packageRoot, '/\\') . '/') as $info) {
-            if (in_array((int) ($info['state'] ?? 0), [2, 3, 4], true)) {
-                $packageId = Manifest::id($info['app']);
+            $packageId = Manifest::id($info['app']);
+            $installation = $this->store->get('installations', $packageId)['value'] ?? [];
+            $needsFinalization = (int) ($info['state'] ?? 0) === 1 && ($installation['state'] ?? 'installed') !== 'installed' && isset($installation['pending']);
+            if (in_array((int) ($info['state'] ?? 0), [2, 3, 4], true) || $needsFinalization) {
                 $packages[$packageId] = $this->registerPackage($packageId) + ['source' => 'package'];
             }
         }

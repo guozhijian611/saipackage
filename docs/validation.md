@@ -86,3 +86,16 @@
 ![手动确认升级计划](screenshots/update-confirmation.jpg)
 
 ![升级完成及旧准备失效](screenshots/update-completed.jpg)
+
+## 全量复审补充验收（2026-11-16）
+
+复审发现及修复见 [PR 审查记录](pr-review.md)，使用最终代码另建独立 MySQL 8.4 / PostgreSQL 17 宿主（项目 sai6lab-pfzlt9ev / sai6lab-thd7h4b3）。两套前序故障实验室 sai6lab-3ak2dse5 / sai6lab-fuznsqr3 只用于定位和早期复现，不代替最终回归。
+
+- 63 个单元测试、124 个断言；Composer validate、PHP lint 通过。此次没有改动前端组件。
+- 两库 ZIP 首装、DDL 后中断及显式重试、种子只执行一次、整棵旧前端移除、安装登记前中断补齐、卸载回滚失败及重试、配置版本倒退提前拒绝、迁移预览异常提前拒绝、配置已提交后失败恢复、暂存目录丢失后升级，全部通过。
+- 两库真实 HTTP：配置已迁移而后续失败时，GET 返回目标 schema/settingsVersion 且密钥脱敏，POST 可使用该目标契约保存，继续恢复成功。配置保存阶段最初测试被 CLI 持有的全局锁拒绝；测试 harness 改为释放 CLI 锁后再模拟独立 HTTP 管理员，409 并非配置接口错误。
+- MySQL SQL-only 夹具首装及升级通过，验证升级不再执行非幂等 install.sql，旧行保留、update.sql 新行恰好一次；PG 按契约跳过 SQL-only 包。
+- 两库事务内重复 INSERT 正确返回修订冲突，不被 PG aborted transaction 异常掩盖。
+- 两库复跑原在线 HTTP check/service/invalid/upgrade/confirm_once：检测零下载/零安装、服务不兼容阻塞、摘要/身份/清单错误、过期确认、配置修改、重复确认、实际后台升级、配置/业务数据保留均通过；beta→stable 实际升级通过。
+
+新夹具由 tests/build_review_fixtures.py 生成，阶段脚本为 tests/review_recovery.php。迁移/SQL/种子故障均为一次性环境的受控注入；没有操作生产数据库或部署生产服务。复审实验室验证完成后仅按各自项目清理，原本保留的本地浏览器验收环境继续保留。

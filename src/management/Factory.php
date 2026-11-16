@@ -19,7 +19,7 @@ final class Factory
         return new Manager($store, $settings, runtime_path() . '/saipackage', [
             'php' => PHP_VERSION, 'saiadmin' => (string) config('plugin.saiadmin.app.version', ''),
             'saipackage' => (string) config('plugin.saipackage.app.version', ''),
-        ]);
+        ], (array) config('plugin.saipackage.management.settings_migrations', []));
     }
 
     public static function services(Manager $manager): Services
